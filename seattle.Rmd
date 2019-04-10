@@ -1,0 +1,85 @@
+---
+title: "Traffic Stops in Seattle, Washington"
+author: "Dasha Metropolitansky"
+date: "April 10, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readr)
+library(stringr)
+library(sf)
+library(fs)
+library(ggplot2)
+library(gt)
+library(lubridate)
+library(ggthemes)
+library(gganimate)
+library(transformr)
+
+#Reading in the RDS file with data from Seattle
+seattle = read_rds(url("https://stacks.stanford.edu/file/druid:tr137st9964/tr137st9964_wa_seattle_2019_02_25.rds"))
+#Downloading and unzipping the Shapes file with data from Seattle
+download.file(url = "https://stacks.stanford.edu/file/druid:tr137st9964/tr137st9964_wa_seattle_shapefiles_2019_02_25.tgz",
+              destfile = "shapes2.tgz")
+untar("shapes2.tgz")
+shapes_data_seattle = read_sf("wa_seattle_shapefiles/SPD_Beats_WGS84.shp")
+
+#Deleting the files to clear up space and prevent duplicate downloads if running the code more than once
+file_delete(c("shapes2.tgz", "wa_seattle_shapefiles/"))
+```
+
+### Mapping arrests in Seattle for black and white people
+```{r echo = FALSE, message = FALSE}
+arrests_race_seattle = seattle %>% 
+#Filtering for cases where an arrest was made
+  filter(arrest_made == TRUE) %>% 
+#Filtering out cases where the longitude and of where the arrest took place are unknown
+  filter(!is.na(lng), !is.na(lat)) %>%
+  filter(!is.na(subject_race)) %>%
+#Renaming the levels of the factor 'subject_race'
+  mutate(subject_race = recode_factor(subject_race,
+                              "black" = "Black",
+                              "white" = "White")) %>%
+#Subsetting for cases where the arrestee was either white or black
+  filter(subject_race %in% c("White", "Black")) %>%
+#Grouping by race 
+  group_by(subject_race) %>% 
+  arrange(date)
+  
+#Converting the coordinates objects into a spatial object
+arrest_locations_seattle = st_as_sf(arrests_race_seattle, 
+                             coords = c("lng", "lat"), 
+                             crs = 4326) 
+
+anim = ggplot(data = shapes_data_seattle) +
+#Filling in the map with a dark gray colour
+  geom_sf(fill = "gray68") +
+#Creating a map-shaped polygon using the location of each arrest as a point and colouring each point by the arrestee's race
+  geom_sf(data = arrest_locations_seattle, mapping = aes(fill = subject_race, colour = subject_race)) +
+  theme_map() + 
+#Including a source note
+  labs(caption = "Source: Stanford Open Policing Project") + 
+#Moving the legend so that it doesn't cover the maps
+  theme(legend.position = c(1.1, 0.1)) +
+#Modifying the legend colours
+  scale_color_manual(name = "Race", values=c("black", "white")) +
+  scale_fill_manual(name = "Race", values=c("black", "white")) +
+#Filling in the legend background with a light gray colour
+  theme(legend.background = element_rect(fill="gray90")) +
+#Colouring the map gridlines white
+  theme(panel.grid.major = element_line(colour = "white")) +
+#Making each data a different frame in the animation
+  transition_states(states = date) + 
+  ease_aes() +
+#Leaving each previous frame as a permanent mark on the map
+  shadow_mark(past = TRUE) +
+#Adding a title that includes the date shown in the present frame
+  ggtitle("Arrests in Seattle on {closest_state} by Race")
+
+#Adding a brief pause at the end of the animation to see the map in its entirety
+animate(anim, end_pause = 20)
+  
+```
